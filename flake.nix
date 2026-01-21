@@ -10,18 +10,23 @@
       pkgs = nixpkgs.legacyPackages.${system};
     in
     {
-      devShells.${system}.default = pkgs.mkShell {
-        packages = [
-          pkgs.python313
-          pkgs.python313Packages.venvShellHook
-        ];
+      devShells.${system}.default =
+        with pkgs;
+        mkShell {
+          packages = [
+            bashInteractive
+            python313
+            python313Packages.venvShellHook
+          ];
 
-        venvDir = ".venv";
+          venvDir = ".venv";
 
-        env.LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
-          pkgs.stdenv.cc.cc.lib
-          pkgs.zlib
-        ];
-      };
+          env.LD_LIBRARY_PATH =
+            with pkgs;
+            lib.makeLibraryPath [
+              stdenv.cc.cc.lib
+              zlib
+            ];
+        };
     };
 }
