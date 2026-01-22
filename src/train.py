@@ -145,7 +145,7 @@ def train_unet(
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    limit=None
+    limit=100
 
     # Create checkpoint directory
     os.makedirs(checkpoint_dir, exist_ok=True)

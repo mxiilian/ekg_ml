@@ -72,12 +72,14 @@ def preprocess_dataset(data_dir, limit, remove_grid=True, grid_threshold=60, tar
     gray_dir = data_dir.parent / "gray"
     gray_dir.mkdir(parents=True, exist_ok=True)
 
-    print("Directories length:", len(list(data_dir.iterdir())))
+    if not data_dir.exists():
+        data_dir = gray_dir
+        
     for index, subject_dir in enumerate(
         list(
             sorted(
                 data_dir.iterdir(),
-                key=lambda x: int(x.name) if x.name.isdigit() else x.name,
+                key=lambda x: (0, int(x.name)) if x.name.isdigit() else (1, x.name),
             )
         )[:limit]
     ):

@@ -23,7 +23,6 @@ class EKGDataset(Dataset):
         if self.transform is None:
             self.transform = transforms.Compose(
                 [
-                    transforms.Resize((512, 512)),
                     transforms.ToTensor(),
                     transforms.Normalize(mean=[0.5], std=[0.5]),
                 ]
