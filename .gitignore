@@ -3,3 +3,6 @@ kaggle.json
 .ipynb_checkpoints
 .venv
 data/
+example/
+checkpoints/
+__pycache__/
