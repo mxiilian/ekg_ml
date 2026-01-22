@@ -5,4 +5,6 @@ kaggle.json
 data/
 example/
 checkpoints/
+points/
 __pycache__/
+

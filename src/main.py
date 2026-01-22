@@ -32,7 +32,7 @@ def main():
     )
 
     parser.add_argument(
-        "--batch-size", type=int, default=8, help="Batch size for training (default: 8)"
+        "--batch-size", type=int, default=4, help="Batch size for training (default: 4)"
     )
 
     parser.add_argument(
@@ -42,14 +42,14 @@ def main():
     parser.add_argument(
         "--val-split",
         type=float,
-        default=0.1,
-        help="Validation split ratio (default: 0.1)",
+        default=0.2,
+        help="Validation split ratio (default: 0.2)",
     )
 
     parser.add_argument(
         "--checkpoint-dir",
         type=str,
-        default="checkpoints",
+        default="points",
         help="Directory to save model checkpoints (default: checkpoints)",
     )
 
@@ -62,8 +62,7 @@ def main():
 
     parser.add_argument(
         "--only-preprocess",
-        type=bool,
-        default=False,
+        action="store_true",
         help="Only preprocess the dataset without training",
     )
 

@@ -8,7 +8,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import torchvision
 
-from unet import UNet
+from unet import UNetLite
 from dataset import EKGDataset
 import preprocess
 
@@ -72,6 +72,7 @@ def save_sample_predictions(model, dataloader, device, save_dir, epoch, num_samp
         outputs = model(input_imgs)
 
         # Take only num_samples
+        num_samples = min(num_samples, input_imgs.size(0))
         input_imgs = input_imgs[:num_samples]
         outputs = outputs[:num_samples]
         target_imgs = target_imgs[:num_samples]
@@ -119,10 +120,10 @@ def save_sample_predictions(model, dataloader, device, save_dir, epoch, num_samp
 def train_unet(
     data_dir,
     num_epochs=10,
-    batch_size=8,
+    batch_size=4,
     learning_rate=1e-4,
-    val_split=0.1,
-    checkpoint_dir="checkpoints",
+    val_split=0.2,
+    checkpoint_dir="points",
     resume_from=None,
     device=None,
     only_preprocess=False,
@@ -145,7 +146,7 @@ def train_unet(
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
 
-    limit=100
+    limit = None
 
     # Create checkpoint directory
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -186,7 +187,7 @@ def train_unet(
 
     # Initialize model
     print("Initializing model...")
-    model = UNet(in_channels=1, out_channels=1).to(device)
+    model = UNetLite(in_channels=1, out_channels=1).to(device)
 
     # Loss function and optimizer
     criterion = nn.L1Loss()
