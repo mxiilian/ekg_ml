@@ -13,6 +13,29 @@ from dataset import EKGDataset
 import preprocess
 
 
+def weighted_l1_loss(pred, target, weight_factor=10.0):
+    """
+    Weighted L1 Loss that penalizes errors on dark pixels (EKG lines) more heavily.
+    
+    Args:
+        pred: Model predictions (normalized to [-1, 1])
+        target: Ground truth targets (normalized to [-1, 1])
+        weight_factor: How much more to penalize errors on dark pixels (default: 10.0)
+    
+    Returns:
+        Weighted L1 loss value
+    """
+    # Calculate standard L1
+    l1 = torch.abs(pred - target)
+    
+    # Create a weight mask: target < 0 means it's a "dark" pixel (EKG signal)
+    # since normalization [-1, 1] maps black to -1 and white to 1.
+    weights = torch.ones_like(target)
+    weights[target < 0] = weight_factor
+    
+    return (l1 * weights).mean()
+
+
 def train_epoch(model, dataloader, criterion, optimizer, device):
     """Train for one epoch"""
     model.train()
@@ -189,8 +212,8 @@ def train_unet(
     print("Initializing model...")
     model = UNetLite(in_channels=1, out_channels=1).to(device)
 
-    # Loss function and optimizer
-    criterion = nn.L1Loss()
+    # Loss function and optimizer - using weighted L1 to penalize missing EKG lines
+    criterion = weighted_l1_loss
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     # Learning rate scheduler
