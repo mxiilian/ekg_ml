@@ -235,3 +235,131 @@ class LightweightAttentionUNet(nn.Module):
         d1 = self.dec1(d2, e1)
         
         return self.output(d1)
+
+
+class SimpleEncoderBlock(nn.Module):
+    """Simple encoder block with two convolutions"""
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+    
+    def forward(self, x):
+        x = self.relu(self.bn1(self.conv1(x)))
+        x = self.relu(self.bn2(self.conv2(x)))
+        return x
+
+
+class SimpleDecoderBlock(nn.Module):
+    """Simple decoder block with upsampling and convolutions"""
+    def __init__(self, in_channels, skip_channels, out_channels):
+        super().__init__()
+        self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+        self.conv1 = nn.Conv2d(in_channels + skip_channels, out_channels, 3, padding=1)
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU(inplace=True)
+    
+    def forward(self, x, skip):
+        x = self.upsample(x)
+        
+        # Ensure sizes match before concatenation
+        if x.shape[2:] != skip.shape[2:]:
+            x = F.interpolate(x, size=skip.shape[2:], mode='bilinear', align_corners=True)
+        
+        x = torch.cat([x, skip], dim=1)
+        x = self.relu(self.bn1(self.conv1(x)))
+        x = self.relu(self.bn2(self.conv2(x)))
+        return x
+
+
+class SimpleUNet(nn.Module):
+    """
+    Simple U-Net for ECG Image Digitization
+    
+    A much simpler and easier to train U-Net architecture without attention mechanisms
+    or depthwise separable convolutions. This model uses standard convolutions and
+    a straightforward encoder-decoder structure.
+    
+    Features:
+    - Standard 2D convolutions
+    - Batch normalization
+    - ReLU activations
+    - Skip connections
+    - ~4-5M parameters (easier to train than lightweight version)
+    
+    This model is recommended for:
+    - Faster training and convergence
+    - Better initial results
+    - Simpler debugging
+    - Less GPU memory requirements
+    """
+    def __init__(self, in_channels=1, out_channels=1, base_features=64):
+        super().__init__()
+        
+        features = [base_features, base_features*2, base_features*4, base_features*8]
+        # features = [64, 128, 256, 512]
+        
+        # Encoder
+        self.enc1 = SimpleEncoderBlock(in_channels, features[0])
+        self.pool1 = nn.MaxPool2d(2)
+        
+        self.enc2 = SimpleEncoderBlock(features[0], features[1])
+        self.pool2 = nn.MaxPool2d(2)
+        
+        self.enc3 = SimpleEncoderBlock(features[1], features[2])
+        self.pool3 = nn.MaxPool2d(2)
+        
+        self.enc4 = SimpleEncoderBlock(features[2], features[3])
+        self.pool4 = nn.MaxPool2d(2)
+        
+        # Bottleneck
+        self.bottleneck = SimpleEncoderBlock(features[3], features[3]*2)
+        
+        # Decoder
+        self.dec4 = SimpleDecoderBlock(features[3]*2, features[3], features[3])
+        self.dec3 = SimpleDecoderBlock(features[3], features[2], features[2])
+        self.dec2 = SimpleDecoderBlock(features[2], features[1], features[1])
+        self.dec1 = SimpleDecoderBlock(features[1], features[0], features[0])
+        
+        # Output
+        self.output = nn.Sequential(
+            nn.Conv2d(features[0], out_channels, 1),
+            nn.Tanh()  # For ECG: pixel values between -1 and 1
+        )
+        
+        # Initialize weights
+        self._init_weights()
+    
+    def _init_weights(self):
+        """Initialize weights using Kaiming initialization"""
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.constant_(m.weight, 1)
+                nn.init.constant_(m.bias, 0)
+    
+    def forward(self, x):
+        # Encoder path
+        e1 = self.enc1(x)
+        e2 = self.enc2(self.pool1(e1))
+        e3 = self.enc3(self.pool2(e2))
+        e4 = self.enc4(self.pool3(e3))
+        
+        # Bottleneck
+        b = self.bottleneck(self.pool4(e4))
+        
+        # Decoder path with skip connections
+        d4 = self.dec4(b, e4)
+        d3 = self.dec3(d4, e3)
+        d2 = self.dec2(d3, e2)
+        d1 = self.dec1(d2, e1)
+        
+        return self.output(d1)

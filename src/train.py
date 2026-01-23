@@ -7,9 +7,9 @@ from PIL import Image
 import torchvision.transforms as transforms
 from tqdm import tqdm
 
-from model import LightweightAttentionUNet
+from model import LightweightAttentionUNet, SimpleUNet
 from data import EKGDataset, preprocess_dataset
-from util import CombinedLoss, count_parameters
+from util import CombinedLoss, WeightedL1Loss, count_parameters
 
 
 # Global log file handle
@@ -31,7 +31,9 @@ def init_log(checkpoint_dir):
     log_path = Path(checkpoint_dir) / f"{timestamp}_training_log.md"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     _log_file = open(log_path, "a")
-    _log_file.write(f"\n\n# Training Run - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+    _log_file.write(
+        f"\n\n# Training Run - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+    )
     _log_file.flush()
     return log_path
 
@@ -54,7 +56,7 @@ def save_sample_predictions(
 ):
     """
     Save input/output/target visualization for multiple image pairs.
-    
+
     Args:
         model: The trained model
         device: Device to run inference on
@@ -66,11 +68,13 @@ def save_sample_predictions(
         transform: Transform to apply to images (default: ToTensor + Normalize)
     """
     if transform is None:
-        transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.Normalize(mean=[0.5], std=[0.5]),
-        ])
-    
+        transform = transforms.Compose(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(mean=[0.5], std=[0.5]),
+            ]
+        )
+
     # Normalize pairs to (input, target) tuples
     pairs = []
     for item in image_pairs:
@@ -78,10 +82,10 @@ def save_sample_predictions(
             pairs.append((item[0], item[1] if len(item) > 1 else None))
         else:
             pairs.append((item, None))
-    
+
     if not pairs:
         return
-    
+
     save_path = Path(save_dir) / "samples"
     save_path.mkdir(parents=True, exist_ok=True)
 
@@ -125,12 +129,12 @@ def save_sample_predictions(
                 axes[i, 2].axis("off")
 
     plt.tight_layout()
-    
+
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     epoch_str = f"_epoch_{epoch+1}" if epoch is not None else ""
     filename = f"predictions{epoch_str}_{timestamp}.png"
     filepath = save_path / filename
-    
+
     plt.savefig(filepath, dpi=300, bbox_inches="tight")
     plt.close()
     log(f"Saved: {filepath}")
@@ -139,14 +143,14 @@ def save_sample_predictions(
 def train_epoch(model, train_loader, criterion, optimizer, device):
     """
     Run one training epoch.
-    
+
     Args:
         model: The neural network model
         train_loader: DataLoader for training data
         criterion: Loss function
         optimizer: Optimizer
         device: Device to run training on
-    
+
     Returns:
         Average training loss for the epoch
     """
@@ -175,13 +179,13 @@ def train_epoch(model, train_loader, criterion, optimizer, device):
 def validate(model, val_loader, criterion, device):
     """
     Run validation.
-    
+
     Args:
         model: The neural network model
         val_loader: DataLoader for validation data
         criterion: Loss function
         device: Device to run validation on
-    
+
     Returns:
         Average validation loss
     """
@@ -213,7 +217,7 @@ def train(
 ):
     """
     Main training function for the U-Net model.
-    
+
     Args:
         data_dir: Path to the training data directory
         num_epochs: Number of training epochs
@@ -223,7 +227,7 @@ def train(
         checkpoint_dir: Directory to save model checkpoints
         resume_from: Path to checkpoint file to resume training from
         only_preprocess: If True, only preprocess the dataset without training
-    
+
     Returns:
         Trained model
     """
@@ -231,7 +235,7 @@ def train(
     checkpoint_path = Path(checkpoint_dir)
     checkpoint_path.mkdir(parents=True, exist_ok=True)
     log_path = init_log(checkpoint_dir)
-    
+
     try:
         # Device setup
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -250,7 +254,7 @@ def train(
         log("\n## Preprocessing\n")
         log("Preprocessing dataset...")
         gray_dir = preprocess_dataset(data_dir)
-        
+
         if only_preprocess:
             log("Preprocessing complete. Exiting (--only-preprocess flag set).")
             return None
@@ -259,19 +263,19 @@ def train(
         log("\n## Dataset\n")
         log("Loading dataset...")
         dataset = EKGDataset(gray_dir)
-        
+
         if len(dataset) == 0:
             log("Error: No samples found in dataset. Please check your data directory.")
             return None
 
         # Model initialization
-        model = LightweightAttentionUNet().to(device)
+        model = SimpleUNet().to(device)
         log(f"Model parameters: {count_parameters(model):,}")
         optimizer = torch.optim.AdamW(
             model.parameters(), lr=learning_rate, weight_decay=1e-4
         )
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, num_epochs)
-        criterion = CombinedLoss(l1_weight=1.0, ssim_weight=1.0, edge_weight=0.5)
+        criterion = WeightedL1Loss()
 
         # Training/Validation split
         val_size = int(len(dataset) * val_split)
@@ -308,9 +312,13 @@ def train(
                 optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
                 start_epoch = checkpoint["epoch"] + 1
                 best_val_loss = checkpoint.get("val_loss", float("inf"))
-                log(f"Resumed from epoch {start_epoch}, best val loss: {best_val_loss:.6f}")
+                log(
+                    f"Resumed from epoch {start_epoch}, best val loss: {best_val_loss:.6f}"
+                )
             else:
-                log(f"Warning: Checkpoint file {resume_from} not found. Starting from scratch.")
+                log(
+                    f"Warning: Checkpoint file {resume_from} not found. Starting from scratch."
+                )
 
         # Specific sample images for visualization
         sample_images = [
@@ -330,7 +338,7 @@ def train(
         log("\n## Training\n")
         log("| Epoch | Train Loss | Val Loss | Best |")
         log("|-------|------------|----------|------|")
-        
+
         for epoch in range(start_epoch, num_epochs):
             train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
             val_loss = validate(model, val_loader, criterion, device)
@@ -339,8 +347,10 @@ def train(
             # Check if best model
             is_best = val_loss < best_val_loss
             best_marker = "*" if is_best else ""
-            
-            log(f"| {epoch+1}/{num_epochs} | {train_loss:.6f} | {val_loss:.6f} | {best_marker} |")
+
+            log(
+                f"| {epoch+1}/{num_epochs} | {train_loss:.6f} | {val_loss:.6f} | {best_marker} |"
+            )
 
             # Save checkpoint if best model
             if is_best:
@@ -356,7 +366,7 @@ def train(
                     },
                     best_model_path,
                 )
-                
+
                 # Save sample predictions
                 if sample_pairs:
                     save_sample_predictions(
@@ -371,6 +381,6 @@ def train(
         log(f"Training completed! Best validation loss: {best_val_loss:.6f}")
         log(f"Log saved to: {log_path}")
         return model
-    
+
     finally:
         close_log()
