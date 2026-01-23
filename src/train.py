@@ -269,7 +269,7 @@ def train(
             return None
 
         # Model initialization
-        model = SimpleUNet().to(device)
+        model = UNet().to(device)
         log(f"Model parameters: {count_parameters(model):,}")
         optimizer = torch.optim.AdamW(
             model.parameters(), lr=learning_rate, weight_decay=1e-4

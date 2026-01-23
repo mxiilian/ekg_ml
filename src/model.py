@@ -170,7 +170,6 @@ class LightweightAttentionUNet(nn.Module):
         super().__init__()
         
         features = [base_features, base_features*2, base_features*4, base_features*8]
-        # features = [32, 64, 128, 256]
         
         # Encoder
         self.enc1 = LightweightEncoderBlock(in_channels, features[0])
@@ -237,13 +236,13 @@ class LightweightAttentionUNet(nn.Module):
         return self.output(d1)
 
 
-class SimpleEncoderBlock(nn.Module):
+class EncoderBlock(nn.Module):
     """Simple encoder block with two convolutions"""
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1)
+        self.conv1 = nn.Conv2d(in_channels, out_channels, 3, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_channels)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
     
@@ -253,14 +252,14 @@ class SimpleEncoderBlock(nn.Module):
         return x
 
 
-class SimpleDecoderBlock(nn.Module):
+class DecoderBlock(nn.Module):
     """Simple decoder block with upsampling and convolutions"""
     def __init__(self, in_channels, skip_channels, out_channels):
         super().__init__()
         self.upsample = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
-        self.conv1 = nn.Conv2d(in_channels + skip_channels, out_channels, 3, padding=1)
+        self.conv1 = nn.Conv2d(in_channels + skip_channels, out_channels, 3, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(out_channels)
-        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(out_channels)
         self.relu = nn.ReLU(inplace=True)
     
@@ -277,7 +276,7 @@ class SimpleDecoderBlock(nn.Module):
         return x
 
 
-class SimpleUNet(nn.Module):
+class UNet(nn.Module):
     """
     Simple U-Net for ECG Image Digitization
     
@@ -298,33 +297,33 @@ class SimpleUNet(nn.Module):
     - Simpler debugging
     - Less GPU memory requirements
     """
-    def __init__(self, in_channels=1, out_channels=1, base_features=64):
+    def __init__(self, in_channels=1, out_channels=1, base_features=16):
         super().__init__()
         
         features = [base_features, base_features*2, base_features*4, base_features*8]
-        # features = [64, 128, 256, 512]
+        # features = [16, 32, 64, 128]
         
         # Encoder
-        self.enc1 = SimpleEncoderBlock(in_channels, features[0])
+        self.enc1 = EncoderBlock(in_channels, features[0])
         self.pool1 = nn.MaxPool2d(2)
         
-        self.enc2 = SimpleEncoderBlock(features[0], features[1])
+        self.enc2 = EncoderBlock(features[0], features[1])
         self.pool2 = nn.MaxPool2d(2)
         
-        self.enc3 = SimpleEncoderBlock(features[1], features[2])
+        self.enc3 = EncoderBlock(features[1], features[2])
         self.pool3 = nn.MaxPool2d(2)
         
-        self.enc4 = SimpleEncoderBlock(features[2], features[3])
+        self.enc4 = EncoderBlock(features[2], features[3])
         self.pool4 = nn.MaxPool2d(2)
         
         # Bottleneck
-        self.bottleneck = SimpleEncoderBlock(features[3], features[3]*2)
+        self.bottleneck = EncoderBlock(features[3], features[3]*2)
         
         # Decoder
-        self.dec4 = SimpleDecoderBlock(features[3]*2, features[3], features[3])
-        self.dec3 = SimpleDecoderBlock(features[3], features[2], features[2])
-        self.dec2 = SimpleDecoderBlock(features[2], features[1], features[1])
-        self.dec1 = SimpleDecoderBlock(features[1], features[0], features[0])
+        self.dec4 = DecoderBlock(features[3]*2, features[3], features[3])
+        self.dec3 = DecoderBlock(features[3], features[2], features[2])
+        self.dec2 = DecoderBlock(features[2], features[1], features[1])
+        self.dec1 = DecoderBlock(features[1], features[0], features[0])
         
         # Output
         self.output = nn.Sequential(
