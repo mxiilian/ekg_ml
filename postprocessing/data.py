@@ -33,6 +33,8 @@ def resample_to_length(signal: np.ndarray, target_length: int) -> np.ndarray:
     for lead in range(leads):
         x = signal[lead]
         finite = np.isfinite(x)
+
+        # Completely missing lead → only return NaNs with target length
         if finite.sum() == 0:
             out.append(np.full(target_length, np.nan, dtype=np.float32))
             continue
@@ -48,6 +50,7 @@ def resample_to_length(signal: np.ndarray, target_length: int) -> np.ndarray:
         # Resample finite mask and restore NaNs outside valid regions
         mask = finite.astype(np.float64)
         mask_resampled = resample(mask, target_length)
+            # Values become fractional; treat <0.5 as mostly invalid and set those samples back to NaN.
         y_resampled[mask_resampled < 0.5] = np.nan
 
         out.append(y_resampled.astype(np.float32))
@@ -117,6 +120,44 @@ class ECGDataset(Dataset):
         
         self.windows = []
         self._create_windows()
+
+    def _create_from_x(self, x: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Create input/target from real digitizer output (x) and ground truth (y).
+        Uses per-lead normalization from y to match training.
+        """
+        # Per-lead normalization (z-score) based on GT
+        lead_mean = np.nanmean(y, axis=1, keepdims=True)
+        lead_std = np.nanstd(y, axis=1, keepdims=True)
+        lead_mean = np.nan_to_num(lead_mean, nan=0.0)
+        lead_std = np.nan_to_num(lead_std, nan=1.0)
+        lead_std = np.where(lead_std < 1e-6, 1.0, lead_std)
+
+        # Align digitizer amplitude to GT scale (per lead, robust)
+        y_abs = np.nanmedian(np.abs(y), axis=1, keepdims=True)
+        x_abs = np.nanmedian(np.abs(x), axis=1, keepdims=True)
+        y_abs = np.nan_to_num(y_abs, nan=0.0, posinf=0.0, neginf=0.0)
+        x_abs = np.nan_to_num(x_abs, nan=0.0, posinf=0.0, neginf=0.0)
+        eps = 1e-6
+        scale = np.where(x_abs > eps, y_abs / x_abs, 1.0)
+        # Prevent extreme scaling from degenerate leads
+        scale = np.clip(scale, 1e-3, 1e3)
+        x_scaled = x * scale
+
+        y_norm = (y - lead_mean) / lead_std
+        x_norm = (x_scaled - lead_mean) / lead_std
+
+        valid_gt = np.isfinite(y_norm)
+        x_finite = np.isfinite(x_norm)
+        mask = (valid_gt & x_finite).astype(np.float32)
+
+        y_target = y_norm.copy()
+        y_target[~valid_gt] = np.nan
+
+        x_filled = np.nan_to_num(x_norm, nan=0.0, posinf=0.0, neginf=0.0)
+        mask = np.where(np.isfinite(mask), mask, 0.0).astype(np.float32)
+
+        return x_filled, mask, y_target, lead_mean, lead_std
     
     def _create_windows(self):
         """Erstelle Fenster mit Overlap aus allen EKGs."""
@@ -187,6 +228,7 @@ class ECGDataset(Dataset):
         masked = np.zeros_like(allowed_mask, dtype=bool)
         remaining = target_total
 
+        # Create at least one long block with 5% probability to simulate large missing segments
         if np.random.rand() < 0.05:
             lead_candidates = [i for i in range(C) if allowed_mask[i].any()]
             if lead_candidates:
@@ -241,16 +283,23 @@ class ECGDataset(Dataset):
         """
         Returns:
             {
-                'x_filled': (12, T) – EKG mit NaNs als 0 gefüllt
-                'mask': (12, T) – Binary Mask (1=vorhanden, 0=fehlt)
-                'y_target': (12, T) – Ground Truth
+                'x_filled': (12, T) - EKG mit NaNs als 0 gefüllt
+                'mask': (12, T) - Binary Mask (1=vorhanden, 0=fehlt)
+                'y_target': (12, T) - Ground Truth
             }
         """
         window_info = self.windows[idx]
         y_window = window_info['y_window']
+        start = window_info.get('start', 0)
+        end = window_info.get('end', y_window.shape[1])
         
         # Beschädigung erstellen
-        x_filled, mask, y_target, lead_mean, lead_std = self._create_damage(y_window)
+        if self.x_list is None:
+            x_filled, mask, y_target, lead_mean, lead_std = self._create_damage(y_window)
+        else:
+            x_full = self.x_list[window_info['y_idx']]
+            x_window = x_full[:, start:end]
+            x_filled, mask, y_target, lead_mean, lead_std = self._create_from_x(x_window, y_window)
         
         # Zu Tensoren konvertieren
         x_filled_t = torch.from_numpy(x_filled).float()
@@ -323,6 +372,9 @@ def create_dataloader(
     target_length: Optional[int] = 10000,  # Default fallback length
     target_fs: int = 1000,
     metadata_path: Optional[str] = None,
+    x_dir: Optional[str] = None,
+    use_digitizer: bool = False,
+    digitizer_variant: Optional[str] = None,
 ) -> DataLoader:
     """
     DataLoader mit Resampling auf Ziel-FS (default 1000 Hz).
@@ -365,7 +417,9 @@ def create_dataloader(
         raise FileNotFoundError(f"Keine CSV-Dateien in {data_dir} gefunden")
     
     print(f"Lade {len(csv_files)} EKG-Dateien von {data_path}...")
+    x_path = Path(x_dir) if (x_dir and use_digitizer) else None
     y_list = []
+    x_list = []
     id_list = []
     for csv_file in csv_files:
         try:
@@ -380,15 +434,60 @@ def create_dataloader(
                 per_record_target = int(round(sig_len * (target_fs / fs)))
 
             y = load_ecg_csv(str(csv_file), target_length=per_record_target)  # ← Resampling hier
+            x = None
+            if x_path is not None:
+                # Find matching digitizer output for this record
+                candidate = None
+                rec_dir = x_path / record_id
+                candidates = []
+                if rec_dir.exists():
+                    candidates = sorted(rec_dir.glob(f"{record_id}-*_timeseries_canonical.csv"))
+                    if not candidates:
+                        candidates = sorted(rec_dir.glob("*.csv"))
+                else:
+                    candidates = sorted(x_path.glob(f"{record_id}*.csv"))
+
+                # Filter out Windows zone identifiers
+                candidates = [p for p in candidates if not p.name.endswith(":Zone.Identifier")]
+
+                if candidates:
+                    if digitizer_variant == "all":
+                        # Use all variants for this record
+                        for cand in candidates:
+                            x = load_ecg_csv(str(cand), target_length=per_record_target)
+                            y_list.append(y)
+                            x_list.append(x)
+                            id_list.append(f"{record_id}:{cand.stem}")
+                        continue
+                    if digitizer_variant:
+                        # e.g. digitizer_variant = "0002"
+                        token = f"{record_id}-{digitizer_variant}_"
+                        pref = [p for p in candidates if token in p.name]
+                        candidate = pref[0] if pref else None
+                    if candidate is None:
+                        # Prefer -0001 if available
+                        pref = [p for p in candidates if f"{record_id}-0001_" in p.name]
+                        candidate = pref[0] if pref else candidates[0]
+
+                if candidate is None:
+                    continue
+
+                x = load_ecg_csv(str(candidate), target_length=per_record_target)
+
             y_list.append(y)
+            if x is not None:
+                x_list.append(x)
             id_list.append(record_id)
         except Exception as e:
             print(f"  ⚠ Fehler beim Laden {csv_file}: {e}")
-    
-    print(f"  ✓ Erfolgreich geladen: {len(y_list)}/{len(csv_files)} EKGs")
-    
+
+    if x_path is not None:
+        print(f"  ✓ Erfolgreich geladen (mit Digitizer): {len(y_list)}/{len(csv_files)} EKGs")
+    else:
+        print(f"  ✓ Erfolgreich geladen: {len(y_list)}/{len(csv_files)} EKGs")
+
     dataset = ECGDataset(
-        x_list=None,  # Synthetisch beschädigen
+        x_list=x_list if x_path is not None else None,
         y_list=y_list,
         id_list=id_list,
         window_size=window_size,

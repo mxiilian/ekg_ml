@@ -7,3 +7,5 @@ data_split
 __pycache__
 postprocessing/checkpoints/
 debug_out
+ecg_digitizer_output/
+postprocessing/results/

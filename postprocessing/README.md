@@ -109,6 +109,24 @@ python3 evaluate.py \
   --output-dir results
 ```
 
+**Alternative (empfohlen):** `run-dir` verwenden, dann werden `training_history.json` und `best_model.pt` automatisch gefunden. CLI-Parameter überschreiben die Werte aus der History.
+
+```bash
+python3 evaluate.py \
+  --test-dir data_split/test \
+  --run-dir checkpoints \
+  --output-dir results
+```
+
+**Wichtige Optionen:**
+- `--run-dir` (Ordner mit `training_history.json` und `best_model.pt`)
+- `--history` (Pfad zu `training_history.json`, optional)
+- `--checkpoint` (Pfad zu `best_model.pt`, falls kein `--run-dir`)
+- `--output-dir` (Default `./results`)
+- `--batch-size`, `--num-workers`
+- `--window-size`, `--overlap`, `--damage-rate`
+- `--hidden-channels`, `--num-blocks`, `--dropout`
+
 **Output:**
 ```
 ======================================================================

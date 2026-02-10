@@ -96,6 +96,68 @@ class ECGMetrics:
         mse = np.mean((y_hat[valid_mask] - y_target[valid_mask]) ** 2)
         rmse = np.sqrt(mse)
         return float(rmse)
+
+    @staticmethod
+    def snr_on_missing(
+        y_hat: np.ndarray,
+        y_target: np.ndarray,
+        mask: np.ndarray,
+    ) -> float:
+        """
+        Signal-to-Noise Ratio (dB) nur auf fehlenden Stellen (mask=0).
+        SNR = 10 * log10( signal_power / noise_power )
+        """
+        valid_mask = np.isfinite(y_target) & np.isfinite(y_hat)
+        missing_mask = (mask == 0) & valid_mask
+        if not missing_mask.any():
+            return float('nan')
+        signal = y_target[missing_mask]
+        noise = y_hat[missing_mask] - y_target[missing_mask]
+        signal_power = np.mean(signal ** 2)
+        noise_power = np.mean(noise ** 2)
+        if noise_power <= 0:
+            return float('inf')
+        return float(10.0 * np.log10(signal_power / noise_power))
+
+    @staticmethod
+    def snr_global(
+        y_hat: np.ndarray,
+        y_target: np.ndarray,
+    ) -> float:
+        """
+        Signal-to-Noise Ratio (dB) auf allen validen Stellen.
+        """
+        valid_mask = np.isfinite(y_target) & np.isfinite(y_hat)
+        if not valid_mask.any():
+            return float('nan')
+        signal = y_target[valid_mask]
+        noise = y_hat[valid_mask] - y_target[valid_mask]
+        signal_power = np.mean(signal ** 2)
+        noise_power = np.mean(noise ** 2)
+        if noise_power <= 0:
+            return float('inf')
+        return float(10.0 * np.log10(signal_power / noise_power))
+
+    @staticmethod
+    def snr_on_present(
+        y_hat: np.ndarray,
+        y_target: np.ndarray,
+        mask: np.ndarray,
+    ) -> float:
+        """
+        Signal-to-Noise Ratio (dB) nur auf vorhandenen Stellen (mask=1).
+        """
+        valid_mask = np.isfinite(y_target) & np.isfinite(y_hat)
+        present_mask = (mask == 1) & valid_mask
+        if not present_mask.any():
+            return float('nan')
+        signal = y_target[present_mask]
+        noise = y_hat[present_mask] - y_target[present_mask]
+        signal_power = np.mean(signal ** 2)
+        noise_power = np.mean(noise ** 2)
+        if noise_power <= 0:
+            return float('inf')
+        return float(10.0 * np.log10(signal_power / noise_power))
     
     @staticmethod
     def per_lead_metrics(
