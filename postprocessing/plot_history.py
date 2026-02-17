@@ -8,7 +8,7 @@ except Exception:  # pragma: no cover - optional dependency
     plt = None
 
 
-def plot_history(history_path: Path, out_path: Path):
+def plot_history(history_path: Path, out_path: Path, loss_scale: str):
     if plt is None:
         raise RuntimeError("matplotlib is required for plotting")
 
@@ -32,7 +32,8 @@ def plot_history(history_path: Path, out_path: Path):
     axes[0].plot(epochs[:len(val_loss)], val_loss, label="val_loss")
     axes[0].set_title("Loss")
     axes[0].set_xlabel("epoch")
-    axes[0].set_yscale("log")
+    if loss_scale == "log":
+        axes[0].set_yscale("log")
     axes[0].legend()
     axes[0].grid(alpha=0.2)
 
@@ -76,20 +77,33 @@ def main():
     parser.add_argument(
         "--out",
         type=str,
-        default="checkpoints/training_history.png",
-        help="Output plot path",
+        default=None,
+        help="Output plot path (defaults to run dir when --run-dir is used)",
+    )
+    parser.add_argument(
+        "--loss-scale",
+        type=str,
+        default="log",
+        choices=("log", "linear"),
+        help="Scale for loss axis (log or linear)",
     )
     args = parser.parse_args()
 
     if args.run_dir:
         run_dir = Path(args.run_dir)
         history_path = run_dir / "training_history.json"
-        out_path = run_dir / "training_history.png"
+        if args.out:
+            out_path = Path(args.out)
+        else:
+            out_path = run_dir / "training_history.png"
     else:
         history_path = Path(args.history)
-        out_path = Path(args.out)
+        if args.out:
+            out_path = Path(args.out)
+        else:
+            out_path = Path("checkpoints/training_history.png")
 
-    plot_history(history_path, out_path)
+    plot_history(history_path, out_path, args.loss_scale)
     print(f"Saved plot: {out_path}")
 
 

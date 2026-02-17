@@ -15,6 +15,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from pathlib import Path
 import numpy as np
 import json
+import random
 from datetime import datetime
 from typing import Optional, Dict, Tuple
 import argparse
@@ -23,6 +24,17 @@ from data import create_dataloader
 from model import build_model
 from loss import CombinedMaskedLoss
 from eval import evaluate_batch, ECGMetrics
+
+
+def set_global_seed(seed: int) -> None:
+    """Set RNG seeds for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 
 class Trainer:
@@ -48,7 +60,7 @@ class Trainer:
         self.checkpoint_dir = checkpoint_dir or Path('./checkpoints')
         self.checkpoint_dir.mkdir(exist_ok=True)
         self.run_id = run_id or datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.run_dir = self.checkpoint_dir / self.run_id
+        self.run_id, self.run_dir = self._ensure_unique_run_dir(self.run_id)
         self.run_dir.mkdir(exist_ok=True)
         
         self.history = {
@@ -63,6 +75,31 @@ class Trainer:
         self.best_epoch = 0
         self._warned_nonfinite = False
         self.grad_clip_norm = grad_clip_norm
+
+    def _ensure_unique_run_dir(self, run_id: str) -> Tuple[str, Path]:
+        """
+        Ensure run_id does not overwrite existing runs.
+        """
+        base_id = run_id
+        run_dir = self.checkpoint_dir / base_id
+        if run_dir.exists() and any(run_dir.iterdir()):
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            base_id = f"{base_id}_{timestamp}"
+            run_dir = self.checkpoint_dir / base_id
+
+        counter = 1
+        while run_dir.exists() and any(run_dir.iterdir()):
+            base_id = f"{run_id}_{counter}"
+            run_dir = self.checkpoint_dir / base_id
+            counter += 1
+
+        if base_id != run_id:
+            print(
+                "  Note: run_id already exists; using unique run_id="
+                f"{base_id}"
+            )
+
+        return base_id, run_dir
     
     def train_epoch(self, train_loader) -> Dict[str, float]:
         """
@@ -374,14 +411,23 @@ class Trainer:
         
         with open(save_path, 'w') as f:
             json.dump(payload, f, indent=2)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = self.run_dir / f"training_history_{timestamp}.json"
+        if backup_path != save_path:
+            with open(backup_path, 'w') as f:
+                json.dump(payload, f, indent=2)
         
         print(f"History saved: {save_path}")
+        print(f"History backup saved: {backup_path}")
 
 
 def main(args):
     """
     Haupttrainings-Script.
     """
+    if args.seed is not None:
+        set_global_seed(args.seed)
     # Setup
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Device: {device}")
@@ -407,6 +453,7 @@ def main(args):
         mask_debug_every=args.mask_debug_every,
         shuffle=True,
         num_workers=args.num_workers,
+        seed=args.seed,
     )
     
     val_loader = None
@@ -430,6 +477,7 @@ def main(args):
             mask_debug_every=args.mask_debug_every,
             shuffle=False,
             num_workers=args.num_workers,
+            seed=args.seed,
         )
     
     if val_loader is None:
@@ -518,6 +566,8 @@ if __name__ == '__main__':
                         help='Directory with validation EKG CSV files')
     parser.add_argument('--batch-size', type=int, default=32)
     parser.add_argument('--num-workers', type=int, default=0)
+    parser.add_argument('--seed', type=int, default=None,
+                        help='Random seed for reproducible training')
     
     # Windowing
     parser.add_argument('--window-size', type=int, default=1000,

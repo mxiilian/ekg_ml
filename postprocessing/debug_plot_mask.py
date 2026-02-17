@@ -9,7 +9,7 @@ def plot_one_window(
     y_target,
     x_filled,
     mask,
-    leads_to_plot=(0, 1, 6),
+    leads_to_plot=None,
     title="ECG mask debug",
     valid_abs_eps=1e-6,
     min_valid_ratio=0.05,
@@ -21,7 +21,15 @@ def plot_one_window(
     T = y_target.shape[1]
     t = np.arange(T)
 
+    if leads_to_plot is None:
+        leads_to_plot = tuple(np.where(np.isfinite(y_target).any(axis=1))[0].tolist())
+    else:
+        leads_to_plot = tuple([c for c in leads_to_plot if np.isfinite(y_target[c]).any()])
+
     n = len(leads_to_plot)
+    if n == 0:
+        print("No leads with finite data in this window; skipping plot")
+        return None
     fig, axes = plt.subplots(n, 1, figsize=(14, 3.5*n), sharex=True)
     if n == 1:
         axes = [axes]
@@ -110,14 +118,15 @@ def main():
 
     fig = plot_one_window(
         y_target, x_filled, mask,
-        leads_to_plot=(0, 1, 2, 6),  # z.B. I, II, III, V1
+        leads_to_plot=None,
         title=f"Mask debug | {csv_path.name}",
         valid_abs_eps=1e-6,
         min_valid_ratio=0.05,
     )
-    out = "mask_debug.png"
-    fig.savefig(out, dpi=150)
-    print("Saved plot to:", out)
+    if fig is not None:
+        out = "mask_debug.png"
+        fig.savefig(out, dpi=150)
+        print("Saved plot to:", out)
 
 if __name__ == "__main__":
     main()

@@ -23,6 +23,13 @@ class ECGMetrics:
     LIMB_LEADS = ['I', 'II', 'III', 'aVR', 'aVL', 'aVF']
     CHEST_LEADS = ['V1', 'V2', 'V3', 'V4', 'V5', 'V6']
     LEAD_NAMES = LIMB_LEADS + CHEST_LEADS
+
+    GAP_BINS = [
+        ("large", 250, 800),
+        ("medium", 120, 300),
+        ("small", 40, 120),
+        ("extra_small", 10, 40),
+    ]
     
     @staticmethod
     def mae_on_missing(
@@ -158,6 +165,28 @@ class ECGMetrics:
         if noise_power <= 0:
             return float('inf')
         return float(10.0 * np.log10(signal_power / noise_power))
+
+    @staticmethod
+    def corr_on_missing(
+        y_hat: np.ndarray,
+        y_target: np.ndarray,
+        mask: np.ndarray,
+    ) -> float:
+        """
+        Pearson-Korrelation nur auf fehlenden Stellen (mask=0).
+        """
+        valid_mask = np.isfinite(y_target) & np.isfinite(y_hat)
+        missing_mask = (mask == 0) & valid_mask
+        if missing_mask.sum() < 2:
+            return float('nan')
+        x = y_hat[missing_mask].astype(np.float64)
+        y = y_target[missing_mask].astype(np.float64)
+        x_std = np.std(x)
+        y_std = np.std(y)
+        if x_std <= 0 or y_std <= 0:
+            return float('nan')
+        corr = np.corrcoef(x, y)[0, 1]
+        return float(corr)
     
     @staticmethod
     def per_lead_metrics(
@@ -192,14 +221,60 @@ class ECGMetrics:
             rmse_g = ECGMetrics.rmse_global(
                 y_hat_lead[None], y_target_lead[None]
             )
+            corr = ECGMetrics.corr_on_missing(
+                y_hat_lead[None], y_target_lead[None], mask_lead[None]
+            )
             
             results[lead_name] = {
                 'mae': mae,
                 'rmse': rmse,
                 'rmse_global': rmse_g,
+                'corr': corr,
             }
         
         return results
+
+    @staticmethod
+    def gap_category_masks(
+        mask: np.ndarray,
+        bins: Optional[list] = None,
+    ) -> Dict[str, np.ndarray]:
+        """
+        Build boolean masks for missing-gap categories per lead.
+
+        Args:
+            mask: (C, T) with 1=present, 0=missing
+            bins: list of (name, min_len, max_len) in priority order
+
+        Returns:
+            dict: {name: boolean mask (C, T) for that category}
+        """
+        if bins is None:
+            bins = ECGMetrics.GAP_BINS
+
+        C, T = mask.shape
+        out = {name: np.zeros((C, T), dtype=bool) for name, _, _ in bins}
+        assigned = np.zeros((C, T), dtype=bool)
+
+        for c in range(C):
+            t = 0
+            while t < T:
+                if mask[c, t] == 1:
+                    t += 1
+                    continue
+                start = t
+                while t < T and mask[c, t] == 0:
+                    t += 1
+                length = t - start
+                for name, min_len, max_len in bins:
+                    if length < min_len or length > max_len:
+                        continue
+                    if not assigned[c, start:t].any():
+                        out[name][c, start:t] = True
+                        assigned[c, start:t] = True
+                    break
+
+        return out
     
     @staticmethod
     def group_metrics(

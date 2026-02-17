@@ -8,6 +8,7 @@ Datenmodul für EKG-NaN-Imputation
 """
 
 import numpy as np
+import random
 import pandas as pd
 from pathlib import Path
 from typing import Tuple, List, Dict, Optional
@@ -375,6 +376,7 @@ def create_dataloader(
     x_dir: Optional[str] = None,
     use_digitizer: bool = False,
     digitizer_variant: Optional[str] = None,
+    seed: Optional[int] = None,
 ) -> DataLoader:
     """
     DataLoader mit Resampling auf Ziel-FS (default 1000 Hz).
@@ -395,6 +397,11 @@ def create_dataloader(
         mask_debug_every: Alle N Samples Debug ausgeben (0/1 = immer)
     """
     data_path = Path(data_dir)
+
+    if seed is not None and num_workers == 0:
+        np.random.seed(seed)
+        random.seed(seed)
+        torch.manual_seed(seed)
 
     meta_map = None
     if metadata_path is None:
@@ -514,9 +521,32 @@ def create_dataloader(
         shuffle=shuffle,
         num_workers=num_workers,
         pin_memory=True,
+        worker_init_fn=_make_worker_init_fn(seed),
+        generator=_make_torch_generator(seed),
     )
     
     return dataloader
+
+
+def _make_worker_init_fn(seed: Optional[int]):
+    if seed is None:
+        return None
+
+    def _init_fn(worker_id: int) -> None:
+        worker_seed = (seed + worker_id) % (2 ** 32)
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+        torch.manual_seed(worker_seed)
+
+    return _init_fn
+
+
+def _make_torch_generator(seed: Optional[int]) -> Optional[torch.Generator]:
+    if seed is None:
+        return None
+    gen = torch.Generator()
+    gen.manual_seed(seed)
+    return gen
 
 
 if __name__ == '__main__':
