@@ -1,3 +1,11 @@
 kaggle.json
 *.zip
 .ipynb_checkpoints
+venv/
+data_split
+.devcontainer/
+__pycache__
+postprocessing/checkpoints/
+debug_out
+ecg_digitizer_output/
+postprocessing/results/
